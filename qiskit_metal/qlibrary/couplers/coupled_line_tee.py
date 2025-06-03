@@ -155,3 +155,153 @@ class CoupledLineTee(QComponent):
                      points=np.array(second_pin_list[1:]),
                      width=p.second_width,
                      input_as_norm=True)
+
+class CoupledLineTeeRounded(QComponent):
+    """Generates a three pin (+) structure comprised of a primary two pin CPW
+    transmission line, and a secondary one pin neighboring CPW transmission
+    line that is capacitively/inductively coupled to the primary. Such a
+    structure can be used, as an example, for generating CPW resonator hangars
+    off of a transmission line.
+
+    Inherits QComponent class.
+
+    ::
+
+        +----------------------------+
+        ------------------------------
+        |
+        |
+        |
+        |
+        +
+
+    .. image::
+        CoupledLineTee.png
+
+    .. meta::
+        Coupled Line Tee
+
+    Default Options:
+        * prime_width: '10um' -- The width of the trace of the two pin CPW transmission line
+        * prime_gap: '6um' -- The dielectric gap of the two pin CPW transmission line
+        * second_width: '10um' -- The width of the trace of the one pin CPW transmission line
+        * second_gap: '6um' -- The dielectric gap of the one pin CPW transmission line
+        * coupling_space: '3um' -- The amount of ground plane between the two transmission lines
+        * coupling_length: '100um' -- The length of parallel between the two transmission lines
+          note: this includes the distance of the curved second of the second line
+        * down_length: '100um' -- The length of the hanging part of the resonator, including the curved region
+        * fillet: '25um'
+        * mirror: False -- Flips the hanger around the y-axis
+        * open_termination: True -- sets if the termination of the second line at the coupling side
+          is an open to ground or short to ground
+    """
+    component_metadata = Dict(short_name='cpw', _qgeometry_table_path='True')
+    """Component metadata"""
+
+    #Currently setting the primary CPW length based on the coupling_length
+    #May want it to be it's own value that the user can control?
+    default_options = Dict(prime_width='10um',
+                           prime_gap='6um',
+                           second_width='10um',
+                           second_gap='6um',
+                           coupling_space='3um',
+                           coupling_length='100um',
+                           down_length='100um',
+                           fillet='25um',
+                           mirror=False,
+                           open_termination=True)
+    """Default connector options"""
+
+    TOOLTIP = """Generates a three pin (+) 
+    structure comprised of a primary two 
+    pin CPW transmission line, and a 
+    secondary one pin neighboring CPW 
+    transmission line that is 
+    capacitively/inductively coupled 
+    to the primary."""
+
+    def make(self):
+        """Build the component."""
+        p = self.p
+
+        prime_cpw_length = p.coupling_length * 2
+        second_flip = 1
+        if p.mirror:
+            second_flip = -1
+
+        #Primary CPW
+        prime_cpw = draw.LineString([[-prime_cpw_length / 2, 0],
+                                     [prime_cpw_length / 2, 0]])
+
+        #Secondary CPW
+        second_down_length = p.down_length
+        second_y = -p.prime_width / 2 - p.prime_gap - p.coupling_space - p.second_gap - p.second_width / 2
+        second_cpw = draw.LineString(
+            [[second_flip * (-p.coupling_length / 2), second_y],
+             [second_flip * (p.coupling_length / 2), second_y],
+             [
+                 second_flip * (p.coupling_length / 2),
+                 second_y - second_down_length
+             ]])
+        
+        circle = draw.Point(0, 0).buffer(p.second_width / 2)
+        half_box = draw.box(-p.second_width / 2 * second_flip, -p.second_width / 2, 0, p.second_width / 2)
+        second_cpw_rounded_termination = circle.intersection(half_box)
+        second_cpw_rounded_termination = draw.translate(second_cpw_rounded_termination, second_flip * (-p.coupling_length / 2), second_y)
+
+        second_cpw_etch = draw.LineString(
+            [[
+                second_flip * (-p.coupling_length / 2),
+                second_y
+            ], [second_flip * (p.coupling_length / 2), second_y],
+             [
+                 second_flip * (p.coupling_length / 2),
+                 second_y - second_down_length
+             ]])
+        
+        circle_etch = draw.Point(0, 0).buffer(p.second_width / 2 + p.second_gap)
+        half_box_etch = draw.box((-p.second_width / 2 - p.second_gap) * second_flip, -p.second_width / 2 - p.second_gap, 0, p.second_width / 2 + p.second_gap)
+        second_cpw_rounded_termination_etch = circle_etch.intersection(half_box_etch)
+        second_cpw_rounded_termination_etch = draw.translate(second_cpw_rounded_termination_etch, second_flip * (-p.coupling_length / 2), second_y)
+
+        #Rotate and Translate
+        c_items = [prime_cpw, second_cpw, second_cpw_etch, second_cpw_rounded_termination, second_cpw_rounded_termination_etch]
+        c_items = draw.rotate(c_items, p.orientation, origin=(0, 0))
+        c_items = draw.translate(c_items, p.pos_x, p.pos_y)
+        [prime_cpw, second_cpw, second_cpw_etch, second_cpw_rounded_termination, second_cpw_rounded_termination_etch] = c_items
+
+        #Add to qgeometry tables
+        self.add_qgeometry('path', {'prime_cpw': prime_cpw},
+                           width=p.prime_width)
+        self.add_qgeometry('path', {'prime_cpw_sub': prime_cpw},
+                           width=p.prime_width + 2 * p.prime_gap,
+                           subtract=True)
+        self.add_qgeometry('path', {'second_cpw': second_cpw},
+                           width=p.second_width,
+                           fillet=p.fillet)
+        self.add_qgeometry('path', {'second_cpw_sub': second_cpw_etch},
+                           width=p.second_width + 2 * p.second_gap,
+                           subtract=True,
+                           fillet=p.fillet)
+        self.add_qgeometry('poly', {'second_cpw_rounded': second_cpw_rounded_termination},
+                           layer=p.layer)
+        self.add_qgeometry('poly', {'second_cpw_rounded_etch': second_cpw_rounded_termination_etch},
+                           subtract=True,
+                           layer=p.layer)
+
+        #Add pins
+        prime_pin_list = prime_cpw.coords
+        second_pin_list = second_cpw.coords
+
+        self.add_pin('prime_start',
+                     points=np.array(prime_pin_list[::-1]),
+                     width=p.prime_width,
+                     input_as_norm=True)
+        self.add_pin('prime_end',
+                     points=np.array(prime_pin_list),
+                     width=p.prime_width,
+                     input_as_norm=True)
+        self.add_pin('second_end',
+                     points=np.array(second_pin_list[1:]),
+                     width=p.second_width,
+                     input_as_norm=True)
